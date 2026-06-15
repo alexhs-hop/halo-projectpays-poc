@@ -1,0 +1,85 @@
+artifacts = ["/app/output.json"]
+
+[task]
+name = "handshake/dce-mri-ktrans"
+
+[metadata]
+author_name = "Hameem M Mahdi, B.S.C.S., M.S.E., Ph.D."
+author_email = "mahdi.hameem@gmail.com"
+author_organization = "Mayo Clinic"
+difficulty_explanation = """
+The task supplies only the raw acquisition and a minimal output schema; the
+modelling pipeline is left entirely to the agent. Reaching the correct answer
+requires several coupled decisions, each of which silently produces a
+plausible-but-wrong number if mishandled, and the two hardest decisions are
+deliberately uncued:
+(1) pre-contrast Variable Flip Angle (VFA) T10 mapping by linearizing the SPGR
+equation across 5 flip angles; (2) per-voxel SPGR signal-to-concentration
+inversion using that T10/S0; (3) recovering the plasma input from the
+arterial AIF: the CSV column is named only `Ca_mM` (whole-blood arterial
+concentration) and NO haematocrit is provided in params.json - the agent must
+know to apply the standard population haematocrit (Cp = Ca/(1-Hct)); (4)
+recovering a high-resolution AIF via interpolation before convolution; (5)
+fitting a pharmacokinetic model with a plasma-volume term (Extended Tofts) even
+though Vp is never named in the output schema.
+Common failure modes that pass without error but fail verification:
+(a) using the AIF column directly as plasma (no haematocrit correction) -
+inflates Ktrans/ve by ~1/(1-Hct);
+(b) fitting a standard two-parameter Tofts model (no Vp) - biases Ktrans high;
+(c) treating the VFA series as DCE data or ignoring it entirely.
+Neither the haematocrit conversion nor the plasma-volume term is hinted by the
+inputs or the schema, so the two decisions are genuinely silent.
+"""
+solution_explanation = """
+Phase 1 - VFA T10 mapping: Linearize SPGR (Y = S/sin_fa, X = S/tan_fa;
+Y = E10*X + S0*(1-E10)) via per-voxel OLS across the 5 VFA angles.
+E10 = slope, T10 = -TR_ms / ln(E10), S0 = intercept / (1 - E10).
+
+Phase 2 - Signal to concentration: R = S(t)/S0, invert SPGR:
+E1 = (sin_fa - R)/(sin_fa - R*cos_fa), R1(t) = -ln(E1)/(TR_ms/1000),
+Ct(t) = (R1(t) - R10)/r1. Average across tumor voxels.
+
+Phase 3 - AIF: aif.csv holds whole-blood arterial Ca. No haematocrit is
+provided, so apply the standard population value: Cp = Ca/(1 - 0.42). Fit a
+cubic spline and evaluate on a high-resolution grid for the convolution.
+
+Phase 4 - Extended Tofts fit: Ct(t) = Vp*Cp(t) + Ktrans*conv(Cp, exp(-kep t))
+with bounded curve_fit. The Vp term is fit internally to keep Ktrans/ve unbiased
+even though it is not part of the requested output. Also run voxelwise fits and
+a bootstrap CI.
+"""
+verification_explanation = """
+The verifier checks /app/output.json with 11 unit tests:
+  - Ktrans within +/-22% of 0.25 min^-1
+  - ve within +/-15% of 0.30
+  - internal consistency (kep == Ktrans / ve, tolerance 1e-4)
+  - fit RMSE <= 0.15 mM
+  - exact tumor voxel count (36)
+  - voxelwise medians inside physiological bands
+  - bootstrap sample count [50, 2000]
+  - CI non-inverted, width bounded, containing the fitted estimate
+The haematocrit and Extended-Tofts errors each push Ktrans well outside the
+band (skipping Hct inflates it by ~1/(1-Hct) ~ 1.7x; a standard Tofts fit biases
+it high), so a wrong modelling choice fails the Ktrans range and voxelwise
+median tests simultaneously. The Ktrans tolerance is widened to +/-22% so that
+any reasonable assumed haematocrit (0.40-0.45) passes once the conversion is
+applied, while skipping it does not.
+"""
+category = "scientific_computing"
+tags = ["mri", "pharmacokinetics", "signal-processing", "scipy", "nibabel", "numpy", "bootstrap", "robustness", "haematocrit", "aif-processing", "extended-tofts", "plasma-volume"]
+expert_time_estimate_hours = 5
+
+[verifier]
+timeout_sec = 60.0
+environment_mode = "separate"
+
+[agent]
+timeout_sec = 1800.0
+
+[environment]
+build_timeout_sec = 600.0
+cpus = 2
+memory_mb = 4096
+storage_mb = 10240
+gpus = 0
+allow_internet = true
