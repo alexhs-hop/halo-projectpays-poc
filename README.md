@@ -1,50 +1,56 @@
-# Halo Task Submission
+# Halo project-pays review — proof of concept
 
-Implement a Terminal-Bench-style task in this repository (Harbor task format). When
-you open a pull request, an automated reviewer scores your task against the Halo
-rubric and posts a **PASS / FAIL verdict** as a PR comment. **All criteria must
-pass** to be accepted — iterate until the verdict is ✅ PASS.
+This is a throwaway PoC of the **project-pays** review model (separate from the
+own-key model). It demonstrates: a contributor opens a PR → a GitHub Action runs
+Claude Code **read-only** against the rubric using the **repo owner's** API key
+(via `pull_request_target`, so the contributor never holds the key and can't
+modify the review) → the verdict is posted as a PR comment and gates the check.
 
-- The review **runs on the project's API key — you do not need one.**
-- The review is **read-only**: it reads your files and grades them; it never runs
-  your solution or tests.
+It is seeded with one real sample task at the repo root so the first PR produces
+a substantive verdict. In production the base repo would be README-only and the
+contributor would add the task.
 
-## How to submit (fork → PR)
+## One-time setup (owner)
 
-You don't have write access to this repo. You **fork it, implement your task, and
-open a pull request** (requires the [GitHub CLI](https://cli.github.com/), `gh`):
+Add your Anthropic key as the repo secret — this is the "project pays" key:
 
 ```bash
-gh repo fork alexhs-hop/halo-projectpays-poc --clone
-cd halo-projectpays-poc
-git checkout -b submission
-#  ... implement the task (see below) ...
-git add -A && git commit -m "Task submission"
-git push -u origin submission
-gh pr create --repo alexhs-hop/halo-projectpays-poc --fill
+gh secret set ANTHROPIC_API_KEY --repo <owner>/<this-repo>   # paste your key
 ```
 
-To **iterate** after reading the verdict: edit, then `git commit` and `git push` —
-the review re-runs automatically on every push.
+(Optional, to test real fork PRs: enable forking in Settings → General, and set
+Settings → Actions → "Fork pull request workflows from outside collaborators" to
+run without approval. Not needed to test with your own branch.)
 
-## What to build (Harbor task format)
+## How to test it
 
-This repo was scaffolded with `harbor tasks init`. Fill in:
+```bash
+git clone <this-repo> && cd <repo>
+git checkout -b test-change
+# make any small edit to the task (e.g. tweak instruction.md or task.toml)
+git add -A && git commit -m "test"
+git push -u origin test-change
+gh pr create --fill
+```
 
-| File | What it is |
-|------|------------|
-| `instruction.md` | The prompt the agent receives. Absolute paths (`/app/...`), explicit output files/schema, the "what" not the "how". |
-| `task.toml` | Metadata + config. **Fill in `difficulty_explanation`, `solution_explanation`, `verification_explanation`, `category`, `tags`, `expert_time_estimate_hours`, author fields** — the reviewer grades these. |
-| `environment/Dockerfile` | The agent's container. Don't COPY `solution/` or `tests/` into it. |
-| `solution/solve.sh` (+ helpers) | Reference solution. `solve.sh` is the entrypoint; put real logic in `solve.py`/helpers it calls (everything it invokes is reviewed). Must solve the task by genuine computation. |
-| `tests/test_outputs.py`, `tests/test.sh` | Verifiers — check the agent's actual outputs (no string/source matching); 1:1 with `instruction.md`. |
-| `tests/Dockerfile` | Verifier image (separate-verifier mode) — owns the test deps; keep ground truth here, never in the agent image. |
+Within a few minutes the **Halo Review** check runs and a verdict comment appears
+on the PR. The review reads the PR's files under `submission/`, grades all 25
+criteria, and posts PASS/FAIL with per-criterion notes.
 
-Keep the `harbor-canary` comment in each file (anti-contamination), pin dependency
-versions, and reference every expected output file in `instruction.md`.
+## How it works (files)
 
-> The exact criteria the reviewer uses are in
-> [`.halo/halo-rubric.toml`](.halo/halo-rubric.toml) — read it to see what "good" means.
+- `.github/workflows/review.yml` — `pull_request_target`; checks out the PR head
+  read-only into `submission/`, runs the review with the owner's key, comments + gates.
+- `.halo/halo-eval-prompt.md` — read-only reviewer instructions (grades `submission/`).
+- `.halo/halo-rubric.toml` — the 25-criterion rubric.
+- `.halo/report.sh` — parses the verdict, posts the sticky comment + `accepted`/`needs-revision` label, fails the check on FAIL.
 
-When your task is complete, replace this README with a short description of your
-task (overview, approach, environment, how verification works).
+## Safety notes (the important part)
+
+- The contributor has no write to this base repo (they fork), so they can't alter
+  the review workflow or reach the key.
+- The workflow checks out the PR **read-only and never executes it** — no building,
+  no `pip`/`npm install` from the submission, no running solve/tests. That is the
+  one rule that keeps the project key safe under `pull_request_target`.
+- The key lives only in this repo's secret and is only ever used by this fixed
+  base-branch workflow.
