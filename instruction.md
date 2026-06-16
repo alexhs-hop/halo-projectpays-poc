@@ -1,6 +1,6 @@
 # DCE-MRI Pharmacokinetic Parameter Estimation
 
-Estimate pharmacokinetic parameters from a DCE-MRI acquisition. All input data are in `/app/data/`. Write results to `/app/output.json`. You have **1800 seconds**.
+Estimate pharmacokinetic parameters from a DCE-MRI acquisition. All input data are in `/app/data/`. Write results to `/app/output.json`. You have **1800 seconds** to complete the task.
 
 ---
 
